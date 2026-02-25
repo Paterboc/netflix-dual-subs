@@ -187,8 +187,8 @@
     overlayEl.setAttribute(
       'style',
       [
-        'position: absolute',
-        'bottom: 0',
+        'position: fixed',
+        'bottom: 10vh',
         'left: 0',
         'right: 0',
         'text-align: center',
@@ -197,11 +197,12 @@
         'padding: 0 5vw 1vh',
         'font-family: Netflix Sans, Helvetica Neue, Segoe UI, sans-serif',
         'font-size: ' + (FONT_SIZES[currentFontSize] || FONT_SIZES.small),
-        'color: rgba(255, 255, 255, 0.75)',
+        'color: rgba(255, 255, 255, 1)',
         'text-shadow: 0 0 4px rgba(0,0,0,0.9), 0 0 8px rgba(0,0,0,0.6)',
         'white-space: pre-wrap',
         'line-height: 1.3',
-        'transition: opacity 0.15s',
+        'transition: none !important',
+        'animation: none !important',
       ].join('; ')
     );
 
@@ -217,25 +218,7 @@
   }
 
   function injectOverlay() {
-    // Try to place inside the Netflix player container
-    const playerContainer =
-      document.querySelector('.watch-video--player-view') ||
-      document.querySelector('[data-uia="video-canvas"]') ||
-      document.querySelector('.VideoContainer');
-
-    if (playerContainer) {
-      // Ensure container is positioned for our absolute child
-      const style = getComputedStyle(playerContainer);
-      if (style.position === 'static') {
-        playerContainer.style.position = 'relative';
-      }
-      playerContainer.appendChild(overlayEl);
-    } else {
-      // Fallback: fixed position over viewport
-      overlayEl.style.position = 'fixed';
-      overlayEl.style.bottom = '10vh';
-      document.body.appendChild(overlayEl);
-    }
+    document.body.appendChild(overlayEl);
   }
 
   function clearOverlay() {
@@ -286,29 +269,12 @@
     if (text !== lastRenderedText) {
       lastRenderedText = text;
       overlayEl.textContent = text;
-
-      // Position above native subs by detecting their presence
-      adjustPosition();
     }
+    adjustPosition();
   }
 
   function adjustPosition() {
-    // Place secondary subs directly below the primary (native) subs
-    const nativeSubs = document.querySelector('.player-timedtext');
-    if (nativeSubs && nativeSubs.textContent.trim()) {
-      const nativeRect = nativeSubs.getBoundingClientRect();
-      // Position our overlay so its top edge starts at the bottom of native subs
-      overlayEl.style.position = 'fixed';
-      overlayEl.style.top = (nativeRect.bottom + 4) + 'px';
-      overlayEl.style.bottom = 'auto';
-      overlayEl.style.left = '0';
-      overlayEl.style.right = '0';
-    } else {
-      // No native subs visible — show at bottom
-      overlayEl.style.position = 'fixed';
-      overlayEl.style.top = 'auto';
-      overlayEl.style.bottom = '10vh';
-    }
+    // Fixed position — no dynamic repositioning
   }
 
   // Also watch for Netflix native subtitle changes to reposition immediately
