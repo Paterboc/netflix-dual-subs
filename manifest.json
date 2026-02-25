@@ -1,0 +1,47 @@
+{
+  "manifest_version": 3,
+  "name": "Netflix Dual Subtitles",
+  "version": "1.0.0",
+  "description": "Overlay a second subtitle language below Netflix's native subtitles.",
+  "permissions": ["storage", "activeTab"],
+  "host_permissions": [
+    "https://*.netflix.com/*",
+    "https://*.nflxvideo.net/*",
+    "https://*.nflxso.net/*"
+  ],
+  "background": {
+    "service_worker": "service-worker.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://*.netflix.com/*"],
+      "js": ["content/content-main.js"],
+      "world": "MAIN",
+      "run_at": "document_start"
+    },
+    {
+      "matches": ["https://*.netflix.com/*"],
+      "js": [
+        "lib/ttml-parser.js",
+        "lib/webvtt-parser.js",
+        "lib/subtitle-store.js",
+        "content/content-isolated.js"
+      ],
+      "world": "ISOLATED",
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}

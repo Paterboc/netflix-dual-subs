@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="header">
+    <h1>Dual Subtitles</h1>
+  </div>
+
+  <div id="no-tracks" class="status">
+    <p>Navigate to a Netflix title to detect available subtitle languages.</p>
+  </div>
+
+  <div id="track-picker" class="hidden">
+    <label for="secondary-lang">Secondary language</label>
+    <select id="secondary-lang">
+      <option value="">Off</option>
+    </select>
+
+    <label class="setting-label">Font size</label>
+    <div class="size-buttons">
+      <button class="size-btn" data-size="small">S</button>
+      <button class="size-btn" data-size="medium">M</button>
+      <button class="size-btn" data-size="large">L</button>
+    </div>
+  </div>
+
+  <div id="status-bar" class="hidden">
+    <span id="status-text"></span>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
