@@ -10,8 +10,9 @@
   let overlayEl = null;
   let rafId = null;
   let lastRenderedText = '';
-  let lastSyncTime = 0;
+  let lastSyncWall = 0;
   let currentFontSize = 'small';
+  let boundVideo = null;
 
   const FONT_SIZES = {
     small: 'clamp(12px, 1.4vw, 22px)',
@@ -239,6 +240,7 @@
 
   function startSync() {
     if (rafId) return;
+    bindVideoEvents();
     syncTick();
   }
 
@@ -247,6 +249,70 @@
       cancelAnimationFrame(rafId);
       rafId = null;
     }
+    if (boundVideo) {
+      boundVideo.removeEventListener('seeked', onSeeked);
+      boundVideo.removeEventListener('play', onPlay);
+      boundVideo.removeEventListener('timeupdate', onTimeUpdate);
+      boundVideo = null;
+    }
+  }
+
+  function bindVideoEvents() {
+    const video = document.querySelector('video');
+    if (!video || video === boundVideo) return;
+
+    if (boundVideo) {
+      boundVideo.removeEventListener('seeked', onSeeked);
+      boundVideo.removeEventListener('play', onPlay);
+      boundVideo.removeEventListener('timeupdate', onTimeUpdate);
+    }
+
+    boundVideo = video;
+    video.addEventListener('seeked', onSeeked);
+    video.addEventListener('play', onPlay);
+    video.addEventListener('timeupdate', onTimeUpdate);
+  }
+
+  function onSeeked() {
+    // Force immediate re-sync after seek
+    lastSyncWall = 0;
+    if (store) {
+      store._lastTime = 0;
+      store._lastIdx = 0;
+    }
+    renderNow();
+  }
+
+  function onPlay() {
+    // Force immediate re-sync when resuming from pause
+    lastSyncWall = 0;
+    renderNow();
+  }
+
+  function onTimeUpdate() {
+    // Native video event — fires reliably even when rAF is throttled
+    // (background tabs, long pause, etc.)
+    const wallNow = performance.now();
+    if (wallNow - lastSyncWall < 200) return;
+    renderNow();
+  }
+
+  function renderNow() {
+    if (!store || !overlayEl) return;
+    const video = boundVideo || document.querySelector('video');
+    if (!video) return;
+
+    const now = video.currentTime;
+    lastSyncWall = performance.now();
+
+    const cues = SubtitleStore.getCuesAt(store, now);
+    const text = cues.map((c) => c.text).join('\n');
+
+    if (text !== lastRenderedText) {
+      lastRenderedText = text;
+      overlayEl.textContent = text;
+    }
+    adjustPosition();
   }
 
   function syncTick() {
@@ -257,20 +323,15 @@
     const video = document.querySelector('video');
     if (!video) return;
 
-    const now = video.currentTime;
+    // Re-bind if video element changed (Netflix SPA navigation)
+    if (video !== boundVideo) bindVideoEvents();
 
-    // Throttle to ~4 Hz (250ms) — subtitle resolution doesn't need 60fps
-    if (Math.abs(now - lastSyncTime) < 0.2) return;
-    lastSyncTime = now;
+    // Throttle to ~4 Hz using wall-clock time
+    // This is a backup — timeupdate event is the primary sync driver
+    const wallNow = performance.now();
+    if (wallNow - lastSyncWall < 200) return;
 
-    const cues = SubtitleStore.getCuesAt(store, now);
-    const text = cues.map((c) => c.text).join('\n');
-
-    if (text !== lastRenderedText) {
-      lastRenderedText = text;
-      overlayEl.textContent = text;
-    }
-    adjustPosition();
+    renderNow();
   }
 
   function adjustPosition() {
