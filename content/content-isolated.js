@@ -13,6 +13,7 @@
   let lastSyncWall = 0;
   let currentFontSize = 'small';
   let boundVideo = null;
+  let timeOffset = 0; // auto-calibrated offset in seconds
 
   const FONT_SIZES = {
     small: 'clamp(12px, 1.4vw, 22px)',
@@ -55,6 +56,9 @@
       clearOverlay();
       store = null;
       availableTracks = [];
+      timeOffset = 0;
+      calibrationSamples = [];
+      lastNativeText = '';
     }
 
     // Merge with existing tracks instead of replacing
@@ -302,7 +306,7 @@
     const video = boundVideo || document.querySelector('video');
     if (!video) return;
 
-    const now = video.currentTime;
+    const now = video.currentTime + timeOffset;
     lastSyncWall = performance.now();
 
     const cues = SubtitleStore.getCuesAt(store, now);
@@ -338,10 +342,64 @@
     // Fixed position — no dynamic repositioning
   }
 
-  // Also watch for Netflix native subtitle changes to reposition immediately
+  // ── Auto-calibration ──
+  // Watch Netflix's native subtitle div. When it changes, compare the video
+  // time to our cue timestamps. If there's a consistent offset, apply it.
+  let calibrationSamples = [];
+  let lastNativeText = '';
+
   const timedTextObserver = new MutationObserver(() => {
     if (overlayEl) adjustPosition();
+    if (!store || !boundVideo) return;
+
+    const el = document.querySelector('.player-timedtext');
+    if (!el) return;
+
+    const nativeText = el.innerText.trim();
+    if (!nativeText || nativeText === lastNativeText) return;
+    lastNativeText = nativeText;
+
+    // Netflix just showed a new native subtitle at this video time
+    const videoTime = boundVideo.currentTime;
+
+    // Find which cue in our store is closest to this video time
+    // (without offset, to measure the raw difference)
+    const rawCues = SubtitleStore.getCuesAt(store, videoTime);
+    if (rawCues.length === 0) {
+      // Try searching nearby — our timestamps might be offset
+      for (let delta = -5; delta <= 5; delta += 0.5) {
+        const nearby = SubtitleStore.getCuesAt(store, videoTime + delta);
+        if (nearby.length > 0) {
+          const sample = delta;
+          calibrationSamples.push(sample);
+          if (calibrationSamples.length > 10) calibrationSamples.shift();
+          applyCalibration();
+          break;
+        }
+      }
+    } else {
+      // Cues found at raw videoTime — offset is ~0 (or already calibrated)
+      calibrationSamples.push(0);
+      if (calibrationSamples.length > 10) calibrationSamples.shift();
+      applyCalibration();
+    }
   });
+
+  function applyCalibration() {
+    if (calibrationSamples.length < 3) return;
+
+    // Use median to avoid outliers
+    const sorted = [...calibrationSamples].sort((a, b) => a - b);
+    const median = sorted[Math.floor(sorted.length / 2)];
+
+    if (Math.abs(median - timeOffset) > 0.1) {
+      console.log('[DualSubs] Auto-calibrated offset:',
+        timeOffset.toFixed(2) + 's →', median.toFixed(2) + 's',
+        '(from', calibrationSamples.length, 'samples)');
+      timeOffset = median;
+      renderNow();
+    }
+  }
 
   function observeNativeSubs() {
     const el = document.querySelector('.player-timedtext');
