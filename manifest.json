@@ -1,13 +1,16 @@
 {
   "manifest_version": 3,
-  "name": "Netflix Dual Subtitles",
-  "version": "1.0.0",
-  "description": "Netflix dual subtitles + hover/highlight-to-translate on any website.",
-  "permissions": ["storage", "activeTab", "contextMenus", "scripting"],
+  "name": "StreamGrab Translate",
+  "version": "2.0.0",
+  "description": "Dual subtitles, video/audio downloads, and instant translate for Netflix & YouTube.",
+  "permissions": ["storage", "activeTab", "contextMenus", "scripting", "downloads"],
   "host_permissions": [
     "https://*.netflix.com/*",
     "https://*.nflxvideo.net/*",
     "https://*.nflxso.net/*",
+    "https://*.youtube.com/*",
+    "https://*.googlevideo.com/*",
+    "https://*.ytimg.com/*",
     "https://translate.googleapis.com/*"
   ],
   "background": {
@@ -15,16 +18,17 @@
   },
   "content_scripts": [
     {
-      "matches": ["https://*.netflix.com/*"],
+      "matches": ["https://*.netflix.com/*", "https://*.youtube.com/*", "https://www.youtube.com/*"],
       "js": ["content/content-main.js"],
       "world": "MAIN",
       "run_at": "document_start"
     },
     {
-      "matches": ["https://*.netflix.com/*"],
+      "matches": ["https://*.netflix.com/*", "https://*.youtube.com/*", "https://www.youtube.com/*"],
       "js": [
         "lib/ttml-parser.js",
         "lib/webvtt-parser.js",
+        "lib/srt-parser.js",
         "lib/subtitle-store.js",
         "content/content-isolated.js"
       ],
