@@ -1,4 +1,4 @@
-// ISOLATED world — orchestrates secondary subtitle fetching, parsing, and overlay rendering
+// ISOLATED world — subtitle overlay + media relay (Netflix + YouTube)
 (function () {
   'use strict';
 
@@ -13,7 +13,11 @@
   let lastSyncWall = 0;
   let currentFontSize = 'small';
   let boundVideo = null;
-  let timeOffset = 0; // auto-calibrated offset in seconds
+  let timeOffset = 0;
+
+  const site = location.hostname.includes('youtube.com') ? 'youtube'
+    : location.hostname.includes('netflix.com') ? 'netflix'
+    : 'other';
 
   const FONT_SIZES = {
     small: 'clamp(12px, 1.4vw, 22px)',
@@ -27,11 +31,13 @@
 
   function init() {
     listenForTracks();
+    listenForMedia();
     listenForMessages();
     loadSavedPreference();
 
-    // Request buffered tracks in case MAIN world captured them before we loaded
+    // Request buffered data in case MAIN world captured before we loaded
     window.postMessage({ type: 'netflix_dual_subs_replay' }, '*');
+    window.postMessage({ type: 'dual_subs_media_replay' }, '*');
   }
 
   // ── Track Capture (from MAIN world via postMessage) ──
@@ -49,9 +55,9 @@
   }
 
   function handleTracks(tracks) {
-    // Detect title change via movieId
+    // Detect title change via movieId (Netflix) or track list change (YouTube)
     const movieId = tracks[0]?.movieId;
-    if (movieId && movieId !== currentMovieId) {
+    if (site === 'netflix' && movieId && movieId !== currentMovieId) {
       currentMovieId = movieId;
       clearOverlay();
       store = null;
@@ -92,6 +98,21 @@
     return Array.from(seen.values());
   }
 
+  // ── Media Relay (from MAIN world → service worker) ──
+
+  function listenForMedia() {
+    window.addEventListener('message', (e) => {
+      if (e.source !== window) return;
+      if (e.data?.type !== 'dual_subs_media') return;
+
+      chrome.runtime.sendMessage({
+        type: 'STORE_MEDIA',
+        media: e.data.media || [],
+        title: e.data.title || '',
+      });
+    });
+  }
+
   // ── Message Handling (from popup / service worker) ──
 
   function listenForMessages() {
@@ -116,6 +137,23 @@
           language: secondaryLang,
           trackCount: availableTracks.length,
         });
+      } else if (msg.type === 'LOAD_SUBTITLE_FILE') {
+        loadSubtitleFromText(msg.content, msg.filename || '');
+        sendResponse({ ok: true });
+      } else if (msg.type === 'DOWNLOAD_TRACK') {
+        const track = availableTracks.find(
+          (t) => t.language === msg.language && !t.isForced
+        );
+        if (track && track.urls.length > 0) {
+          chrome.runtime.sendMessage({
+            type: 'DOWNLOAD_SUBTITLE',
+            url: track.urls[0].url,
+            filename: msg.filename || `subtitles_${track.language}.vtt`,
+          });
+          sendResponse({ ok: true });
+        } else {
+          sendResponse({ ok: false, error: 'Track not found' });
+        }
       }
       return true;
     });
@@ -143,7 +181,6 @@
       return;
     }
 
-    // Prefer TTML/DFXP over WebVTT (Netflix usually serves TTML)
     const preferred = pickBestUrl(track.urls);
 
     try {
@@ -151,19 +188,7 @@
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       const text = await resp.text();
 
-      let cues;
-      if (
-        preferred.format.includes('dfxp') ||
-        preferred.format.includes('ttml') ||
-        preferred.format.includes('xml') ||
-        text.trimStart().startsWith('<?xml') ||
-        text.trimStart().startsWith('<tt')
-      ) {
-        cues = TTMLParser.parse(text);
-      } else {
-        cues = WebVTTParser.parse(text);
-      }
-
+      const cues = parseSubtitleText(text, preferred.format);
       store = SubtitleStore.create(cues);
       ensureOverlay();
       startSync();
@@ -172,8 +197,43 @@
     }
   }
 
+  function loadSubtitleFromText(content, filename) {
+    const ext = filename.split('.').pop()?.toLowerCase() || '';
+    let format = '';
+    if (ext === 'srt') format = 'srt';
+    else if (ext === 'vtt' || ext === 'webvtt') format = 'webvtt';
+    else if (ext === 'ttml' || ext === 'dfxp' || ext === 'xml') format = 'ttml';
+
+    const cues = parseSubtitleText(content, format);
+    if (cues.length === 0) {
+      console.warn('[DualSubs] No cues parsed from file:', filename);
+      return;
+    }
+
+    store = SubtitleStore.create(cues);
+    ensureOverlay();
+    startSync();
+    console.log('[DualSubs] Loaded', cues.length, 'cues from file:', filename);
+  }
+
+  function parseSubtitleText(text, format) {
+    const trimmed = text.trimStart();
+    if (
+      format.includes('dfxp') ||
+      format.includes('ttml') ||
+      format.includes('xml') ||
+      trimmed.startsWith('<?xml') ||
+      trimmed.startsWith('<tt')
+    ) {
+      return TTMLParser.parse(text);
+    }
+    if (format === 'srt' || (!format.includes('vtt') && !trimmed.startsWith('WEBVTT') && trimmed.match(/^\d+\r?\n\d{2}:\d{2}:\d{2}/))) {
+      return SRTParser.parse(text);
+    }
+    return WebVTTParser.parse(text);
+  }
+
   function pickBestUrl(urls) {
-    // Prefer TTML/DFXP, fall back to whatever is available
     const ttml = urls.find(
       (u) =>
         u.format.includes('dfxp') ||
@@ -190,31 +250,35 @@
 
     overlayEl = document.createElement('div');
     overlayEl.id = 'netflix-dual-subs-overlay';
-    overlayEl.setAttribute(
-      'style',
-      [
-        'position: fixed',
-        'bottom: 10vh',
-        'left: 0',
-        'right: 0',
-        'text-align: center',
-        'pointer-events: none',
-        'z-index: 2147483647',
-        'padding: 0 5vw 1vh',
-        'font-family: Netflix Sans, Helvetica Neue, Segoe UI, sans-serif',
-        'font-size: ' + (FONT_SIZES[currentFontSize] || FONT_SIZES.small),
-        'color: rgba(255, 255, 255, 1)',
-        'text-shadow: 0 0 4px rgba(0,0,0,0.9), 0 0 8px rgba(0,0,0,0.6)',
-        'white-space: pre-wrap',
-        'line-height: 1.3',
-        'transition: none !important',
-        'animation: none !important',
-      ].join('; ')
-    );
+
+    const styles = [
+      'left: 0',
+      'right: 0',
+      'text-align: center',
+      'pointer-events: none',
+      'z-index: 2147483647',
+      'padding: 0 5vw 1vh',
+      'font-family: Netflix Sans, Helvetica Neue, Segoe UI, sans-serif',
+      'font-size: ' + (FONT_SIZES[currentFontSize] || FONT_SIZES.small),
+      'color: rgba(255, 255, 255, 1)',
+      'text-shadow: 0 0 4px rgba(0,0,0,0.9), 0 0 8px rgba(0,0,0,0.6)',
+      'white-space: pre-wrap',
+      'line-height: 1.3',
+      'transition: none !important',
+      'animation: none !important',
+    ];
+
+    if (site === 'youtube') {
+      styles.push('position: absolute', 'bottom: 12%');
+    } else {
+      styles.push('position: fixed', 'bottom: 10vh');
+    }
+
+    overlayEl.setAttribute('style', styles.join('; '));
 
     injectOverlay();
 
-    // Re-inject if DOM restructures (Netflix SPA navigation)
+    // Re-inject if DOM restructures (SPA navigation)
     const bodyObserver = new MutationObserver(() => {
       if (!document.contains(overlayEl)) {
         injectOverlay();
@@ -224,23 +288,45 @@
   }
 
   function injectOverlay() {
-    document.body.appendChild(overlayEl);
+    if (site === 'youtube') {
+      const player = document.querySelector('#movie_player');
+      if (player) {
+        if (getComputedStyle(player).position === 'static') {
+          player.style.position = 'relative';
+        }
+        player.appendChild(overlayEl);
+      } else {
+        document.body.appendChild(overlayEl);
+      }
+    } else {
+      document.body.appendChild(overlayEl);
+    }
     injectSubtitleSelectStyles();
   }
 
-  // Make native Netflix subtitles selectable for hover-translate
+  // Make native subtitles selectable for hover-translate
   let subtitleStylesInjected = false;
   function injectSubtitleSelectStyles() {
     if (subtitleStylesInjected) return;
     subtitleStylesInjected = true;
     const style = document.createElement('style');
-    style.textContent = `
-      .player-timedtext, .player-timedtext span {
-        user-select: text !important;
-        -webkit-user-select: text !important;
-        pointer-events: auto !important;
-      }
-    `;
+    if (site === 'youtube') {
+      style.textContent = `
+        .ytp-caption-window-container, .ytp-caption-window-container span {
+          user-select: text !important;
+          -webkit-user-select: text !important;
+          pointer-events: auto !important;
+        }
+      `;
+    } else {
+      style.textContent = `
+        .player-timedtext, .player-timedtext span {
+          user-select: text !important;
+          -webkit-user-select: text !important;
+          pointer-events: auto !important;
+        }
+      `;
+    }
     document.head.appendChild(style);
   }
 
@@ -280,8 +366,15 @@
     }
   }
 
+  function findVideo() {
+    if (site === 'youtube') {
+      return document.querySelector('#movie_player video') || document.querySelector('video');
+    }
+    return document.querySelector('video');
+  }
+
   function bindVideoEvents() {
-    const video = document.querySelector('video');
+    const video = findVideo();
     if (!video || video === boundVideo) return;
 
     if (boundVideo) {
@@ -297,30 +390,23 @@
   }
 
   function onSeeked() {
-    // Force immediate re-sync after seek
     lastSyncWall = 0;
     if (store) {
       store._lastTime = 0;
       store._lastIdx = 0;
     }
-
-    // Reset calibration — old samples are from a different position
     lastNativeText = '';
     consecutiveMisses = 0;
     calibrationLocked = false;
-
     renderNow();
   }
 
   function onPlay() {
-    // Force immediate re-sync when resuming from pause
     lastSyncWall = 0;
     renderNow();
   }
 
   function onTimeUpdate() {
-    // Native video event — fires reliably even when rAF is throttled
-    // (background tabs, long pause, etc.)
     const wallNow = performance.now();
     if (wallNow - lastSyncWall < 200) return;
     renderNow();
@@ -328,7 +414,7 @@
 
   function renderNow() {
     if (!store || !overlayEl) return;
-    const video = boundVideo || document.querySelector('video');
+    const video = boundVideo || findVideo();
     if (!video) return;
 
     const now = video.currentTime + timeOffset;
@@ -340,7 +426,6 @@
     if (text !== lastRenderedText) {
       lastRenderedText = text;
       if (text) {
-        // Wrap in a span with pointer-events so hover-translate can detect words
         overlayEl.innerHTML = '';
         const span = document.createElement('span');
         span.textContent = text;
@@ -360,14 +445,11 @@
 
     if (!store || !overlayEl) return;
 
-    const video = document.querySelector('video');
+    const video = findVideo();
     if (!video) return;
 
-    // Re-bind if video element changed (Netflix SPA navigation)
     if (video !== boundVideo) bindVideoEvents();
 
-    // Throttle to ~4 Hz using wall-clock time
-    // This is a backup — timeupdate event is the primary sync driver
     const wallNow = performance.now();
     if (wallNow - lastSyncWall < 200) return;
 
@@ -375,19 +457,20 @@
   }
 
   // ── Auto-calibration ──
-  // Netflix serves both tracks on the same timeline, so offset defaults to 0.
-  // Only recalibrate for large, consistent desyncs (e.g., file offset by
-  // several seconds). Small gaps between tracks are normal — different
-  // languages segment dialogue into cues differently.
+
   let lastNativeText = '';
   let periodicCalibrationTimer = null;
   let consecutiveMisses = 0;
   let calibrationLocked = false;
 
+  const nativeSubSelector = site === 'youtube'
+    ? '.ytp-caption-window-container'
+    : '.player-timedtext';
+
   const timedTextObserver = new MutationObserver(() => {
     if (!store || !boundVideo) return;
 
-    const el = document.querySelector('.player-timedtext');
+    const el = document.querySelector(nativeSubSelector);
     if (!el) return;
 
     const nativeText = el.innerText.trim();
@@ -398,18 +481,13 @@
     const activeCues = SubtitleStore.getCuesAt(store, adjustedTime);
 
     if (activeCues.length > 0) {
-      // Current offset is working fine.
       consecutiveMisses = 0;
       return;
     }
 
-    // Native sub showing but no secondary cue. Could be a normal
-    // segmentation gap or a real desync. Count it.
     consecutiveMisses++;
   });
 
-  // Periodic check — only applies an offset if there's strong evidence
-  // of a large, consistent desync (many consecutive misses).
   function calibratePeriodic() {
     if (!store || !boundVideo || calibrationLocked) return;
     if (boundVideo.paused) return;
@@ -424,15 +502,11 @@
 
     consecutiveMisses++;
 
-    // Only recalibrate after 6+ consecutive misses (~60s of no matching cues).
-    // This filters out normal cue segmentation gaps.
     if (consecutiveMisses < 6) return;
 
-    // Search for the nearest cue to the raw video time.
     const videoTime = boundVideo.currentTime;
     const cues = store.cues;
 
-    // Binary search for rightmost cue with start <= videoTime
     let lo = 0, hi = cues.length - 1;
     while (lo <= hi) {
       const mid = (lo + hi) >>> 1;
@@ -440,7 +514,6 @@
       else hi = mid - 1;
     }
 
-    // Find the nearest cue start among neighbors
     let bestOffset = null;
     let bestDist = Infinity;
     for (let i = Math.max(0, hi - 1); i <= Math.min(cues.length - 1, hi + 2); i++) {
@@ -451,14 +524,12 @@
       }
     }
 
-    // Only apply if the offset is large (>1s) — small differences are
-    // normal segmentation gaps, not real desync.
     if (bestOffset !== null && Math.abs(bestOffset) > 1) {
-      console.log('[DualSubs] Large desync detected, calibrating offset:',
-        timeOffset.toFixed(3) + 's →', bestOffset.toFixed(3) + 's');
+      console.log('[DualSubs] Calibrating offset:',
+        timeOffset.toFixed(3) + 's ->', bestOffset.toFixed(3) + 's');
       timeOffset = bestOffset;
       consecutiveMisses = 0;
-      calibrationLocked = true; // Don't keep adjusting
+      calibrationLocked = true;
       renderNow();
     }
   }
@@ -476,7 +547,7 @@
   }
 
   function observeNativeSubs() {
-    const el = document.querySelector('.player-timedtext');
+    const el = document.querySelector(nativeSubSelector);
     if (el) {
       timedTextObserver.observe(el, {
         childList: true,
@@ -487,12 +558,36 @@
     startPeriodicCalibration();
   }
 
-  // Retry observation until Netflix player is ready
   const readyObserver = new MutationObserver(() => {
-    if (document.querySelector('.player-timedtext')) {
+    if (document.querySelector(nativeSubSelector)) {
       observeNativeSubs();
       readyObserver.disconnect();
     }
   });
   readyObserver.observe(document.body, { childList: true, subtree: true });
+
+  // YouTube: re-detect tracks on SPA navigation (video change)
+  if (site === 'youtube') {
+    let lastUrl = location.href;
+    const navObserver = new MutationObserver(() => {
+      if (location.href !== lastUrl) {
+        lastUrl = location.href;
+        // Reset for new video
+        clearOverlay();
+        store = null;
+        availableTracks = [];
+        timeOffset = 0;
+        lastNativeText = '';
+        consecutiveMisses = 0;
+        calibrationLocked = false;
+        chrome.storage.local.set({ availableTracks: [] });
+        // Request new tracks after a brief delay for page to load
+        setTimeout(() => {
+          window.postMessage({ type: 'netflix_dual_subs_replay' }, '*');
+          window.postMessage({ type: 'dual_subs_media_replay' }, '*');
+        }, 2000);
+      }
+    });
+    navObserver.observe(document.body, { childList: true, subtree: true });
+  }
 })();
