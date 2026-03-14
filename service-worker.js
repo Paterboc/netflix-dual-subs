@@ -1,8 +1,15 @@
-// Service worker — context menu translate, media storage, downloads
+// Service worker — context menu translate, media detection, downloads
 
 // ── Per-tab media storage ──
 
-const tabMedia = new Map(); // tabId -> { media: [], title: '' }
+const tabMedia = new Map(); // tabId -> { media: [], title: '', seen: Set }
+
+function getTabData(tabId) {
+  if (!tabMedia.has(tabId)) {
+    tabMedia.set(tabId, { media: [], title: '', seen: new Set() });
+  }
+  return tabMedia.get(tabId);
+}
 
 // Clean up on tab close or navigation
 chrome.tabs.onRemoved.addListener((tabId) => {
@@ -16,6 +23,57 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
     injectedTabs.delete(tabId);
   }
 });
+
+// ── Generic media detection via webRequest ──
+// Catches video/audio responses from ANY site (Instagram, Twitter, Reddit, etc.)
+
+chrome.webRequest.onHeadersReceived.addListener(
+  (details) => {
+    const tabId = details.tabId;
+    if (tabId < 0) return; // not from a tab
+
+    // Check content-type header
+    const contentType = details.responseHeaders?.find(
+      (h) => h.name.toLowerCase() === 'content-type'
+    )?.value?.toLowerCase() || '';
+
+    if (!contentType.startsWith('video/') && !contentType.startsWith('audio/')) return;
+
+    // Skip blob/data URLs
+    if (details.url.startsWith('blob:') || details.url.startsWith('data:')) return;
+
+    // Skip HLS/DASH segments (tiny, useless individually)
+    if (details.url.match(/\.(ts|m4s|m4f|cmfv|cmfa)(\?|$)/i)) return;
+
+    // Skip tiny files (< 100KB — thumbnails, previews, short clips)
+    const contentLength = details.responseHeaders?.find(
+      (h) => h.name.toLowerCase() === 'content-length'
+    )?.value;
+    if (contentLength && parseInt(contentLength) < 100000) return;
+
+    const data = getTabData(tabId);
+
+    // Deduplicate by URL
+    if (data.seen.has(details.url)) return;
+    data.seen.add(details.url);
+
+    const isAudio = contentType.startsWith('audio/');
+    const size = contentLength ? parseInt(contentLength) : null;
+
+    data.media.push({
+      url: details.url,
+      type: isAudio ? 'audio' : 'video+audio',
+      mimeType: contentType.split(';')[0],
+      quality: isAudio ? 'Audio' : 'Video',
+      size,
+      width: null,
+      height: null,
+      source: 'detected',
+    });
+  },
+  { urls: ['<all_urls>'] },
+  ['responseHeaders']
+);
 
 // ── Context menu translate ──
 
@@ -65,12 +123,17 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 
   if (msg.type === 'STORE_MEDIA') {
+    // From YouTube/Netflix content scripts — merge with webRequest-detected media
     const tabId = sender.tab?.id;
     if (tabId) {
-      tabMedia.set(tabId, {
-        media: msg.media || [],
-        title: msg.title || '',
-      });
+      const data = getTabData(tabId);
+      if (msg.title) data.title = msg.title;
+      for (const m of msg.media || []) {
+        if (!data.seen.has(m.url)) {
+          data.seen.add(m.url);
+          data.media.push(m);
+        }
+      }
     }
     sendResponse({ ok: true });
     return true;
@@ -78,11 +141,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   if (msg.type === 'GET_MEDIA') {
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-      const tabId = tabs[0]?.id;
+      const tab = tabs[0];
+      const tabId = tab?.id;
       const data = tabId ? tabMedia.get(tabId) : null;
       sendResponse({
         media: data?.media || [],
-        title: data?.title || '',
+        title: data?.title || tab?.title || '',
       });
     });
     return true;
@@ -106,7 +170,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 
   if (msg.type === 'DOWNLOAD_SUBTITLE') {
-    // Fetch subtitle content and save as file
     fetch(msg.url)
       .then((resp) => {
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
