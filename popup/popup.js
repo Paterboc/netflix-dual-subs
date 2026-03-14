@@ -188,13 +188,12 @@
 
     noMediaEl.classList.add('hidden');
 
-    // Only show muxed (video+audio) — these actually play after download
-    // Skip "video only" streams entirely (useless without ffmpeg merge)
+    // Muxed video+audio (playable after download) — sort by resolution then size
     const muxed = media
       .filter((m) => m.type === 'video+audio')
-      .sort((a, b) => (b.height || 0) - (a.height || 0));
+      .sort((a, b) => (b.height || b.size || 0) - (a.height || a.size || 0));
 
-    // For audio, pick the best quality per codec family, label simply
+    // Audio streams — pick best per codec family
     const audioAll = media
       .filter((m) => m.type === 'audio')
       .sort((a, b) => (b.size || 0) - (a.size || 0));
@@ -205,12 +204,13 @@
       addSection('Video');
       for (const m of muxed) {
         const ext = guessExt(m.mimeType);
+        // For generic detected media, use size as the distinguishing label
+        const label = (m.quality === 'Video' && m.size)
+          ? `Video (${formatSize(m.size)})`
+          : m.quality;
+        const detail = m.quality === 'Video' ? shortMime(m.mimeType) : formatSize(m.size);
         const filename = `${sanitize(title)}_${m.quality}.${ext}`;
-        addMediaItem(
-          m.quality,
-          formatSize(m.size),
-          () => downloadFile(m.url, filename)
-        );
+        addMediaItem(label, detail, () => downloadFile(m.url, filename));
       }
     }
 
@@ -349,6 +349,11 @@
     if (mimeType.includes('vorbis')) return 'ogg';
     if (mimeType.includes('audio/')) return 'm4a';
     return 'mp4';
+  }
+
+  function shortMime(mimeType) {
+    if (!mimeType) return '';
+    return mimeType.split(';')[0].split('/')[1] || '';
   }
 
   function sanitize(name) {

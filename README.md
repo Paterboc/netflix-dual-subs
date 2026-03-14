@@ -1,12 +1,12 @@
 # NovaVox
 
-Watch in any language. Dual subtitles, media downloads, and instant translate for Netflix, YouTube, and any website — zero setup, runs entirely in your browser.
+Watch in any language. Dual subtitles, media downloads from any site, and instant translate — zero setup, runs entirely in your browser.
 
 ## What It Does
 
 - **Dual Subtitles** — display two subtitle languages at once on Netflix and YouTube
-- **Download Media** — save video, audio, and subtitle files from YouTube
-- **Instant Translate** — right-click any text on any website to translate it instantly
+- **Download Media** — save video and audio from Instagram, Twitter/X, Reddit, TikTok, YouTube, and any site that serves unencrypted media
+- **Instant Translate** — right-click any text on any website to translate it
 
 ## Installation
 
@@ -41,20 +41,25 @@ Display a secondary subtitle language below the native subtitles while watching 
 
 ### Media Downloads
 
-Save video, audio, and subtitles from YouTube directly to your computer.
+Save video and audio from any website that serves unencrypted media. NovaVox automatically detects video and audio files as they load on the page.
 
-- **Video** — ready-to-play files with audio included (up to 720p)
-- **Audio** — extract just the audio track (music, podcasts, lectures)
-- **Subtitles** — download any available subtitle track as a .vtt file
-
-All media is detected from the page itself — nothing is proxied, re-encoded, or sent to external servers.
+**Works on:**
+- Instagram (reels, stories, posts)
+- Twitter / X (videos, voice notes)
+- Reddit (hosted videos)
+- TikTok
+- YouTube (video, audio, subtitles)
+- Facebook (non-DRM videos)
+- Vimeo, Dailymotion, Twitch clips
+- Blogs, news sites, forums — any site with embedded video/audio
 
 **How to use:**
-1. Open a YouTube video
-2. Click the NovaVox icon → **Downloads** tab
-3. Pick a quality and click **Download**
+1. Open a page with video or audio content
+2. Play the video (NovaVox detects it as it loads)
+3. Click the NovaVox icon → **Downloads** tab
+4. Click **Download** on any detected item
 
-> Netflix video streams are DRM-encrypted and cannot be downloaded. Netflix subtitles (plain text) can be downloaded.
+> DRM-encrypted streams (Netflix video, some Hulu/Disney+ content) cannot be downloaded. Netflix subtitles (plain text) can still be downloaded.
 
 ### Instant Translate
 
@@ -73,21 +78,17 @@ Translate selected text on any website with a right-click. Works everywhere — 
 
 ## Supported Sites
 
-| | Dual Subs | Video Download | Audio Download | Subtitle Download | Translate |
-|---|---|---|---|---|---|
-| **Netflix** | Yes | No (DRM) | No (DRM) | Yes | Yes |
-| **YouTube** | Yes | Yes | Yes | Yes | Yes |
-| **Any website** | — | — | — | — | Yes |
-
-The translate feature works on every website: social media, news, forums, e-commerce, documentation — anything with selectable text.
-
-## Supported Subtitle Formats
-
-| Format | Used By |
-|--------|---------|
-| TTML / DFXP | Netflix |
-| WebVTT | YouTube |
-| SRT | Internal parser (used for compatibility) |
+| | Dual Subs | Media Download | Subtitle Download | Translate |
+|---|---|---|---|---|
+| **Netflix** | Yes | No (DRM) | Yes | Yes |
+| **YouTube** | Yes | Yes | Yes | Yes |
+| **Instagram** | — | Yes | — | Yes |
+| **Twitter / X** | — | Yes | — | Yes |
+| **Reddit** | — | Yes | — | Yes |
+| **TikTok** | — | Yes | — | Yes |
+| **Facebook** | — | Most content | — | Yes |
+| **Vimeo** | — | Yes | — | Yes |
+| **Any website** | — | If unencrypted | — | Yes |
 
 ## Permissions
 
@@ -97,8 +98,9 @@ The translate feature works on every website: social media, news, forums, e-comm
 | `activeTab` | Reads the current tab to overlay subtitles |
 | `contextMenus` | Adds "Translate" to right-click menu |
 | `scripting` | Injects the translate tooltip on demand |
-| `downloads` | Saves video/audio/subtitle files to your computer |
-| Host access | Netflix + YouTube domains for subtitle and media data; Google Translate API |
+| `downloads` | Saves files to your computer |
+| `webRequest` | Detects video/audio files loading on any page |
+| Host access | All URLs — needed to detect and download media from any site |
 
 ## Requirements
 

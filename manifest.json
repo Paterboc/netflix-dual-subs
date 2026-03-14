@@ -2,17 +2,9 @@
   "manifest_version": 3,
   "name": "NovaVox",
   "version": "2.0.0",
-  "description": "Watch in any language. Dual subtitles, media downloads, and instant translate for Netflix and YouTube.",
-  "permissions": ["storage", "activeTab", "contextMenus", "scripting", "downloads"],
-  "host_permissions": [
-    "https://*.netflix.com/*",
-    "https://*.nflxvideo.net/*",
-    "https://*.nflxso.net/*",
-    "https://*.youtube.com/*",
-    "https://*.googlevideo.com/*",
-    "https://*.ytimg.com/*",
-    "https://translate.googleapis.com/*"
-  ],
+  "description": "Watch in any language. Dual subtitles, media downloads from any site, and instant translate.",
+  "permissions": ["storage", "activeTab", "contextMenus", "scripting", "downloads", "webRequest"],
+  "host_permissions": ["<all_urls>"],
   "background": {
     "service_worker": "service-worker.js"
   },
